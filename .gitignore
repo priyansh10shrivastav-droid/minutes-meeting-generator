@@ -1,0 +1,32 @@
+# Environment variables and API keys (CRITICAL: NEVER COMMIT)
+.env
+*.env
+!.env.example
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Output files & large audio recordings
+outputs/*
+!outputs/.gitkeep
+data/*.wav
+data/*.mp3
+data/*.m4a
+!data/sample_meeting.wav
+!data/sample_transcript.json
+
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+*.log

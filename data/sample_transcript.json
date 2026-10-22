@@ -1,0 +1,49 @@
+{
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.8,
+      "text": "Hello team, welcome to the sprint kickoff meeting.",
+      "speaker": "Facilitator"
+    },
+    {
+      "start": 3.8,
+      "end": 7.5,
+      "text": "Today we agreed to migrate our database to PostgreSQL 16.",
+      "speaker": "Facilitator"
+    },
+    {
+      "start": 7.5,
+      "end": 12.0,
+      "text": "David: I will complete the database schema migration and prepare the rollback scripts by next Wednesday.",
+      "speaker": "David"
+    },
+    {
+      "start": 12.0,
+      "end": 15.2,
+      "text": "Sarah: I can handle updating the authentication API documentation once the PR is submitted.",
+      "speaker": "Sarah"
+    },
+    {
+      "start": 15.2,
+      "end": 19.5,
+      "text": "Alex: We also need someone to benchmark query latency on the staging cluster before month end, but we haven't assigned an owner yet.",
+      "speaker": "Alex"
+    },
+    {
+      "start": 19.5,
+      "end": 24.0,
+      "text": "Facilitator: Exactly. Also, what is our fallback strategy if the cloud migration window exceeds four hours? Let's leave that as an open question.",
+      "speaker": "Facilitator"
+    },
+    {
+      "start": 24.0,
+      "end": 26.5,
+      "text": "Let us meet again on Friday for the sprint retrospective.",
+      "speaker": "Facilitator"
+    }
+  ],
+  "full_text": "Hello team, welcome to the sprint kickoff meeting. Today we agreed to migrate our database to PostgreSQL 16. David: I will complete the database schema migration and prepare the rollback scripts by next Wednesday. Sarah: I can handle updating the authentication API documentation once the PR is submitted. Alex: We also need someone to benchmark query latency on the staging cluster before month end, but we haven't assigned an owner yet. Facilitator: Exactly. Also, what is our fallback strategy if the cloud migration window exceeds four hours? Let's leave that as an open question. Let us meet again on Friday for the sprint retrospective.",
+  "language": "en",
+  "duration_seconds": 26.5
+}
