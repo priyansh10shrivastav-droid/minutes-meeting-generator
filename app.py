@@ -1,15 +1,17 @@
 """
-MeetNote — AI Meeting Minutes Generator
-Supports two completely independent transcription workflows:
+MeetNote — Executive Meeting Intelligence & Structured Minutes Generator
+Supports two independent workflows:
 1. Upload Existing Audio (MP3, WAV, M4A -> faster-whisper STT -> Editable Transcript)
-2. Live Meeting Transcription (Browser Mic -> Real-time Streaming Web Speech STT + Live Waveform -> Editable Transcript)
-Both modes use the same meeting-minutes generation engine with Gemini & Faithfulness Verification.
+2. Live Meeting Transcription (Browser Mic -> Real-time Streaming Web Speech STT + Waveform -> Editable Transcript)
+Both workflows produce structured minutes (Summary, Discussion Points, Decisions, Action Items, Next Meeting Details)
+and support persistent Recent Meetings history and clean exports (PDF, TXT, Markdown, JSON).
 """
 
 import os
 import io
 import json
 import time
+import uuid
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -28,55 +30,54 @@ load_dotenv()
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="MeetNote — AI Meeting Minutes",
-    page_icon="🎙️",
+    page_title="MeetNote — Meeting Minutes Generator",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ─── Declare Custom Live Transcription Component ─────────────────────────────
+# ─── Custom Live Transcription Component ─────────────────────────────────────
 _component_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "components", "live_transcription")
 live_transcription_comp = components.declare_component("live_transcription", path=_component_dir)
 
-# ─── Session State Initialization ────────────────────────────────────────────
-default_state = {
-    # Active workflow mode: "upload" or "live"
-    "active_mode": "upload",
-    # Mode 1: Upload state
-    "uploaded_audio_bytes": None,
-    "uploaded_audio_name": None,
-    "upload_transcript_text": "",
-    # Mode 2: Live state
-    "live_transcript_text": "",
-    "live_duration_seconds": 0,
-    "live_is_stopped": False,
-    # Shared generation outputs
-    "meeting_minutes": None,
-    "verification_results": None,
-    "active_transcript_obj": None,
-    # Recent meetings list
-    "recent_meetings": [
-        {"title": "Project Sync", "date": "Nov 19, 2026", "duration": "12 min"},
-        {"title": "Client Discussion", "date": "Nov 17, 2026", "duration": "24 min"},
-        {"title": "Intern Review", "date": "Nov 15, 2026", "duration": "18 min"},
-        {"title": "Team Standup", "date": "Nov 13, 2026", "duration": "9 min"},
-        {"title": "Development Update", "date": "Nov 11, 2026", "duration": "27 min"},
-    ]
-}
+# ─── Session State ───────────────────────────────────────────────────────────
+if "active_mode" not in st.session_state:
+    st.session_state["active_mode"] = "upload"
 
-for key, val in default_state.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
+if "uploaded_audio_bytes" not in st.session_state:
+    st.session_state["uploaded_audio_bytes"] = None
+if "uploaded_audio_name" not in st.session_state:
+    st.session_state["uploaded_audio_name"] = None
+if "upload_transcript_text" not in st.session_state:
+    st.session_state["upload_transcript_text"] = ""
+
+if "live_transcript_text" not in st.session_state:
+    st.session_state["live_transcript_text"] = ""
+if "live_duration_seconds" not in st.session_state:
+    st.session_state["live_duration_seconds"] = 0
+
+if "meeting_minutes" not in st.session_state:
+    st.session_state["meeting_minutes"] = None
+if "active_transcript_obj" not in st.session_state:
+    st.session_state["active_transcript_obj"] = None
+if "verification_results" not in st.session_state:
+    st.session_state["verification_results"] = None
+
+# Real persistent storage for meetings within the session
+if "saved_meetings" not in st.session_state:
+    st.session_state["saved_meetings"] = []
+if "selected_meeting_id" not in st.session_state:
+    st.session_state["selected_meeting_id"] = None
 
 
-# ─── Custom CSS for High-Fidelity Design ──────────────────────────────────────
+# ─── Refined Professional CSS ────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Base typography and background */
+/* Global resets */
 body, [data-testid="stAppViewContainer"] {
-    background-color: #F8F9FA !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color: #111827;
+    background-color: #F8FAFC !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #0F172A;
 }
 
 [data-testid="stHeader"] {
@@ -86,22 +87,23 @@ body, [data-testid="stAppViewContainer"] {
 /* Sidebar styling */
 [data-testid="stSidebar"] {
     background-color: #FFFFFF !important;
-    border-right: 1px solid #E5E7EB;
-    padding-top: 1rem !important;
+    border-right: 1px solid #E2E8F0;
+    padding-top: 1.2rem !important;
 }
 
 [data-testid="stSidebar"] .stRadio label {
-    padding: 10px 14px !important;
-    border-radius: 10px !important;
-    font-size: 0.92rem !important;
+    padding: 9px 14px !important;
+    border-radius: 8px !important;
+    font-size: 0.88rem !important;
     font-weight: 500 !important;
-    color: #374151 !important;
+    color: #475569 !important;
     cursor: pointer !important;
+    transition: background 0.15s;
 }
 
 [data-testid="stSidebar"] .stRadio [data-checked="true"] label,
 [data-testid="stSidebar"] .stRadio label[data-checked="true"] {
-    background-color: #111827 !important;
+    background-color: #0F172A !important;
     color: #FFFFFF !important;
     font-weight: 600 !important;
 }
@@ -110,289 +112,301 @@ body, [data-testid="stAppViewContainer"] {
     display: none !important;
 }
 
-/* Header badge */
-.ai-badge {
-    display: inline-flex;
+/* Brand header */
+.app-brand-row {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    background: #F3F4F6;
-    border: 1px solid #E5E7EB;
-    border-radius: 99px;
-    padding: 4px 12px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: #4B5563;
-    margin-bottom: 8px;
+    justify-content: space-between;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #E2E8F0;
 }
 
-.main-title {
-    font-size: 2.1rem;
+.app-brand-title {
+    font-size: 2.2rem;
     font-weight: 800;
-    color: #111827;
-    letter-spacing: -0.5px;
-    margin-bottom: 4px;
+    letter-spacing: -0.6px;
+    color: #0F172A;
+    line-height: 1.1;
 }
 
-.main-sub {
+.app-brand-subtitle {
     font-size: 0.95rem;
-    color: #6B7280;
-    margin-bottom: 22px;
+    color: #64748B;
+    margin-top: 4px;
 }
 
-/* Card components */
-.mn-card {
+.workspace-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #EEF2FF;
+    border: 1px solid #C7D2FE;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: #4338CA;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Standard White Cards */
+.content-card {
     background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 16px;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
     padding: 22px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     margin-bottom: 18px;
 }
 
-/* Mode Selector Cards */
+/* Mode Selection Cards */
 .mode-card {
     background: #FFFFFF;
-    border: 1.5px solid #E5E7EB;
-    border-radius: 14px;
-    padding: 16px 20px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
+    border: 1.5px solid #E2E8F0;
+    border-radius: 12px;
+    padding: 16px 18px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
+}
+
+.mode-card:hover {
+    border-color: #94A3B8;
 }
 
 .mode-card.active {
-    border-color: #111827;
-    box-shadow: 0 4px 12px rgba(17, 24, 39, 0.08);
+    border-color: #0F172A;
+    background: #FFFFFF;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, 0.07);
 }
 
-.mode-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    background: #F3F4F6;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
+.mode-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #0F172A;
 }
 
-.mode-card.active .mode-icon {
-    background: #EEF2FF;
-    color: #4F46E5;
-}
-
-/* Drag and Drop Container */
-.dropzone-box {
-    border: 2px dashed #D1D5DB;
-    border-radius: 16px;
-    padding: 36px 20px;
-    text-align: center;
-    background: #FAFAFA;
-    transition: border-color 0.2s;
-    margin-bottom: 16px;
+.mode-desc {
+    font-size: 0.8rem;
+    color: #64748B;
+    margin-top: 2px;
 }
 
 /* Primary generate button */
 div[data-testid="stButton"] > button[kind="primary"] {
-    background: #111827 !important;
+    background: #0F172A !important;
     color: #FFFFFF !important;
-    border-radius: 12px !important;
-    padding: 14px 28px !important;
-    font-size: 1.05rem !important;
+    border-radius: 10px !important;
+    padding: 12px 24px !important;
+    font-size: 0.98rem !important;
     font-weight: 600 !important;
     border: none !important;
-    box-shadow: 0 4px 14px rgba(17, 24, 39, 0.25) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.2) !important;
     width: 100% !important;
-    transition: transform 0.1s ease, background 0.2s !important;
 }
 
 div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: #1F2937 !important;
-    transform: translateY(-1px);
+    background: #1E293B !important;
 }
 
-/* Metric stat cards */
-.stat-card {
+/* Stat Cards */
+.metric-box {
     background: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 12px;
-    padding: 14px 18px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 12px 16px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
-.stat-title {
+
+.metric-lbl {
     font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
-    color: #6B7280;
+    color: #64748B;
     letter-spacing: 0.5px;
 }
-.stat-value {
-    font-size: 1.85rem;
+
+.metric-val {
+    font-size: 1.7rem;
     font-weight: 800;
-    color: #111827;
+    color: #0F172A;
     margin-top: 2px;
 }
 
-/* Recent Meetings list items */
-.recent-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 11px 0;
-    border-bottom: 1px solid #F3F4F6;
+/* Recent meeting item */
+.mtg-card-item {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    transition: border-color 0.15s;
 }
-.recent-item:last-child {
-    border-bottom: none;
+
+.mtg-card-item:hover {
+    border-color: #94A3B8;
 }
-.recent-title {
-    font-size: 0.9rem;
+
+.mtg-card-title {
     font-weight: 600;
-    color: #111827;
+    font-size: 0.88rem;
+    color: #0F172A;
 }
-.recent-meta {
-    font-size: 0.76rem;
-    color: #6B7280;
+
+.mtg-card-meta {
+    font-size: 0.74rem;
+    color: #64748B;
     margin-top: 2px;
 }
 
-/* Evidence block */
-.evidence-quote {
+/* Evidence quote callout */
+.evidence-callout {
     background: #F8FAFC;
-    border-left: 3px solid #6366F1;
-    border-radius: 0 8px 8px 0;
-    padding: 8px 14px;
-    font-size: 0.85rem;
+    border-left: 3px solid #4F46E5;
+    border-radius: 0 6px 6px 0;
+    padding: 8px 12px;
+    font-size: 0.84rem;
     color: #334155;
     font-style: italic;
     margin-top: 6px;
 }
 
-/* Status Badges */
-.badge-sup {
+/* Status badges without emojis */
+.status-pill {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.status-pill.supported {
     background: #DCFCE7;
     color: #166534;
     border: 1px solid #BBF7D0;
-    padding: 3px 10px;
-    border-radius: 99px;
-    font-size: 0.76rem;
-    font-weight: 700;
 }
-.badge-part {
+
+.status-pill.partial {
     background: #FEF3C7;
     color: #92400E;
     border: 1px solid #FDE68A;
-    padding: 3px 10px;
-    border-radius: 99px;
-    font-size: 0.76rem;
-    font-weight: 700;
 }
-.badge-unsup {
+
+.status-pill.unsupported {
     background: #FEE2E2;
     color: #991B1B;
     border: 1px solid #FECACA;
-    padding: 3px 10px;
-    border-radius: 99px;
-    font-size: 0.76rem;
-    font-weight: 700;
 }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ─── Sidebar Navigation ───────────────────────────────────────────────────────
+# ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
-    # Logo
     st.markdown("""
-    <div style="display:flex;align-items:center;gap:10px;padding:12px 6px 18px;border-bottom:1px solid #F3F4F6;margin-bottom:14px;">
-        <div style="font-size:24px;">🎙️</div>
+    <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid #E2E8F0;margin-bottom:14px;">
+        <div style="width:34px;height:34px;border-radius:8px;background:#0F172A;display:flex;align-items:center;justify-content:center;color:#FFFFFF;font-weight:700;font-size:0.95rem;">
+            MN
+        </div>
         <div>
-            <div style="font-size:1.15rem;font-weight:800;color:#111827;letter-spacing:-0.3px;">MeetNote</div>
-            <div style="font-size:0.7rem;color:#6B7280;font-weight:500;">AI Meeting Assistant</div>
+            <div style="font-size:1.25rem;font-weight:800;letter-spacing:-0.4px;color:#0F172A;line-height:1.1;">MeetNote</div>
+            <div style="font-size:0.75rem;color:#64748B;">Meeting Minutes Workspace</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    nav_selection = st.radio(
+    nav_tab = st.radio(
         "Navigation",
-        ["🏠  Home", "📁  Meetings", "📑  Templates", "⚙️  Settings"],
+        ["Home", "Meeting History", "Settings"],
         label_visibility="collapsed",
         index=0
     )
 
     st.write("")
-    st.write("")
-
-    # Sidebar settings info
-    if "Settings" in nav_selection:
-        st.markdown("**Model Configuration**")
+    if "Settings" in nav_tab:
+        st.markdown("**Engine Settings**")
         selected_model = st.selectbox(
             "Gemini Model",
-            ["gemini-3.8-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-latest"],
+            ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest"],
             index=0
         )
         whisper_size = st.selectbox(
-            "Whisper STT Model Size",
+            "Whisper STT Size",
             ["tiny", "base", "small", "medium"],
             index=1
         )
     else:
-        selected_model = "gemini-3.8-flash"
+        selected_model = "gemini-3.5-flash"
         whisper_size = "base"
 
-    st.markdown("""
-    <div style="position:fixed;bottom:20px;display:flex;align-items:center;gap:8px;font-size:0.85rem;color:#6B7280;">
-        <span>❓</span> Help & Documentation
-    </div>
-    """, unsafe_allow_html=True)
 
-
-# ─── Main Content Layout ──────────────────────────────────────────────────────
-col_left, col_right = st.columns([2.5, 1.1], gap="large")
-
-with col_left:
-    # ── Header ────────────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="ai-badge">✨ AI Meeting Assistant</div>
-    <div class="main-title">Generate Meeting Minutes</div>
-    <div class="main-sub">Transcribe, summarize, and turn discussions into actionable notes.</div>
-    """, unsafe_allow_html=True)
-
-    # ── Mode Selector Cards (Side-by-Side) ─────────────────────────────────────
-    m1_col, m2_col = st.columns(2)
-
-    with m1_col:
-        is_upload_active = st.session_state["active_mode"] == "upload"
-        active_class = "active" if is_upload_active else ""
-        card_html_1 = f"""
-        <div class="mode-card {active_class}">
-            <div class="mode-icon">📄</div>
-            <div>
-                <div style="font-weight:700;font-size:0.98rem;color:#111827;">Upload Recording</div>
-                <div style="font-size:0.78rem;color:#6B7280;margin-top:2px;">Use an existing audio file</div>
-            </div>
+# ─── Top Brand Header ────────────────────────────────────────────────────────
+st.markdown("""
+<div class="app-brand-row">
+    <div style="display:flex;align-items:center;gap:14px;">
+        <div style="width:46px;height:46px;border-radius:10px;background:#0F172A;display:flex;align-items:center;justify-content:center;color:#FFFFFF;font-weight:800;font-size:1.25rem;letter-spacing:-0.5px;box-shadow:0 2px 6px rgba(15,23,42,0.18);">
+            MN
         </div>
-        """
-        st.markdown(card_html_1, unsafe_allow_html=True)
-        if st.button("Select Upload Mode", key="btn_sel_upload", use_container_width=True):
+        <div>
+            <div class="app-brand-title">MeetNote</div>
+            <div class="app-brand-subtitle">Transcribe audio recordings and live meetings into verified, structured meeting minutes.</div>
+        </div>
+    </div>
+    <div style="text-align:right;">
+        <span class="workspace-badge">Workspace</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ─── Main Content Layout: Two Columns ────────────────────────────────────────
+col_main, col_recent = st.columns([2.5, 1.1], gap="large")
+
+with col_main:
+
+    # ── Action Bar (if viewing a generated/selected meeting) ──
+    if st.session_state.get("meeting_minutes"):
+        top_bar_col1, top_bar_col2 = st.columns([3, 1])
+        with top_bar_col1:
+            curr_title = st.session_state["meeting_minutes"].meeting_title
+            st.markdown(f"**Viewing:** `{curr_title}`")
+        with top_bar_col2:
+            if st.button("New Meeting", key="btn_new_meeting", use_container_width=True):
+                st.session_state["meeting_minutes"] = None
+                st.session_state["active_transcript_obj"] = None
+                st.session_state["verification_results"] = None
+                st.session_state["upload_transcript_text"] = ""
+                st.session_state["live_transcript_text"] = ""
+                st.session_state["selected_meeting_id"] = None
+                st.rerun()
+
+    # ── Mode Selection Cards (Upload vs Live) ─────────────────────────────────
+    m_col1, m_col2 = st.columns(2)
+
+    with m_col1:
+        is_upload = st.session_state["active_mode"] == "upload"
+        cls_upload = "active" if is_upload else ""
+        st.markdown(f"""
+        <div class="mode-card {cls_upload}">
+            <div class="mode-title">Upload Recording</div>
+            <div class="mode-desc">Process pre-recorded audio (MP3, WAV, M4A)</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Select Upload Workflow", key="btn_choose_upload", use_container_width=True):
             st.session_state["active_mode"] = "upload"
             st.rerun()
 
-    with m2_col:
-        is_live_active = st.session_state["active_mode"] == "live"
-        active_class = "active" if is_live_active else ""
-        card_html_2 = f"""
-        <div class="mode-card {active_class}">
-            <div class="mode-icon">🎙️</div>
-            <div>
-                <div style="font-weight:700;font-size:0.98rem;color:#111827;">Live Meeting</div>
-                <div style="font-size:0.78rem;color:#6B7280;margin-top:2px;">Transcribe in real-time</div>
-            </div>
+    with m_col2:
+        is_live = st.session_state["active_mode"] == "live"
+        cls_live = "active" if is_live else ""
+        st.markdown(f"""
+        <div class="mode-card {cls_live}">
+            <div class="mode-title">Live Meeting</div>
+            <div class="mode-desc">Capture microphone audio in real time</div>
         </div>
-        """
-        st.markdown(card_html_2, unsafe_allow_html=True)
-        if st.button("Select Live Mode", key="btn_sel_live", use_container_width=True):
+        """, unsafe_allow_html=True)
+        if st.button("Select Live Workflow", key="btn_choose_live", use_container_width=True):
             st.session_state["active_mode"] = "live"
             st.rerun()
 
@@ -402,12 +416,12 @@ with col_left:
     # WORKFLOW 1: UPLOAD EXISTING AUDIO (Independent)
     # =========================================================================
     if st.session_state["active_mode"] == "upload":
-        st.markdown('<div class="mn-card">', unsafe_allow_html=True)
-        st.markdown("### 📄 Upload Existing Recording")
-        st.markdown("<div style='font-size:0.85rem;color:#6B7280;margin-top:-6px;margin-bottom:14px;'>Upload pre-recorded meeting audio (.mp3, .wav, .m4a). No microphone required.</div>", unsafe_allow_html=True)
+        st.markdown('<div class="content-card">', unsafe_allow_html=True)
+        st.markdown("#### Upload Audio Recording")
+        st.caption("Upload previously recorded meeting audio. No microphone access is requested.")
 
         audio_file = st.file_uploader(
-            "Drop your audio file here",
+            "Upload meeting recording",
             type=["mp3", "wav", "m4a"],
             label_visibility="collapsed",
             help="Supported: MP3, WAV, M4A up to 200MB"
@@ -417,24 +431,21 @@ with col_left:
             st.session_state["uploaded_audio_bytes"] = audio_file.getvalue()
             st.session_state["uploaded_audio_name"] = audio_file.name
 
-        # Audio file information and player
+        # Audio file info & player
         if st.session_state["uploaded_audio_bytes"]:
             fname = st.session_state["uploaded_audio_name"]
             size_mb = round(len(st.session_state["uploaded_audio_bytes"]) / (1024 * 1024), 2)
 
-            file_info_col1, file_info_col2 = st.columns([3, 1])
-            with file_info_col1:
+            f_col1, f_col2 = st.columns([3, 1])
+            with f_col1:
                 st.markdown(f"""
-                <div style="display:flex;align-items:center;gap:12px;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:10px 14px;margin-top:6px;margin-bottom:10px;">
-                    <span style="font-size:20px;">🎵</span>
-                    <div>
-                        <div style="font-weight:600;font-size:0.9rem;color:#111827;">{fname}</div>
-                        <div style="font-size:0.75rem;color:#6B7280;">File Size: {size_mb} MB</div>
-                    </div>
+                <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:8px 12px;margin:8px 0;">
+                    <div style="font-weight:600;font-size:0.86rem;color:#0F172A;">{fname}</div>
+                    <div style="font-size:0.75rem;color:#64748B;">Size: {size_mb} MB</div>
                 </div>
                 """, unsafe_allow_html=True)
-            with file_info_col2:
-                if st.button("🗑️ Remove File", key="btn_remove_audio"):
+            with f_col2:
+                if st.button("Remove File", key="btn_remove_upload_file"):
                     st.session_state["uploaded_audio_bytes"] = None
                     st.session_state["uploaded_audio_name"] = None
                     st.session_state["upload_transcript_text"] = ""
@@ -442,10 +453,9 @@ with col_left:
 
             st.audio(st.session_state["uploaded_audio_bytes"])
 
-            # Transcribe Audio button
             st.write("")
-            if st.button("🎙️ Transcribe Audio Recording", key="btn_transcribe_upload", type="secondary", use_container_width=True):
-                with st.spinner("Transcribing audio using local faster-whisper STT with timestamps..."):
+            if st.button("Transcribe Audio Recording", key="btn_exec_transcribe", type="secondary", use_container_width=True):
+                with st.spinner("Transcribing audio using local faster-whisper STT..."):
                     try:
                         transcript_obj = transcribe_audio(
                             st.session_state["uploaded_audio_bytes"],
@@ -454,111 +464,105 @@ with col_left:
                         )
                         st.session_state["upload_transcript_text"] = transcript_obj.formatted_transcript
                         st.session_state["active_transcript_obj"] = transcript_obj
-                        st.success(f"✅ Transcription complete! ({round(transcript_obj.duration_seconds, 1)}s audio detected)")
-                    except Exception as e:
-                        st.error(f"❌ Transcription error: {str(e)}")
+                        st.success(f"Transcription complete: {round(transcript_obj.duration_seconds, 1)}s audio processed.")
+                    except Exception as err:
+                        st.error(f"Transcription error: {str(err)}")
 
-        # Editable Transcript Section
         st.write("")
-        st.markdown("**Extracted Transcript (Review & Edit):**")
-        edited_upload_transcript = st.text_area(
-            "Review & edit transcript:",
+        st.markdown("**Transcript (Review & Edit):**")
+        edited_upload_text = st.text_area(
+            "Upload transcript review:",
             value=st.session_state.get("upload_transcript_text", ""),
-            height=180,
+            height=160,
             label_visibility="collapsed",
-            placeholder="Uploaded audio transcript will appear here after clicking 'Transcribe Audio Recording'. You can review and edit it before generating minutes."
+            placeholder="Transcribed text from your uploaded audio will appear here. You can review and edit before generating minutes."
         )
-        st.session_state["upload_transcript_text"] = edited_upload_transcript
+        st.session_state["upload_transcript_text"] = edited_upload_text
         st.markdown('</div>', unsafe_allow_html=True)
 
     # =========================================================================
     # WORKFLOW 2: LIVE MEETING TRANSCRIPTION (Independent)
     # =========================================================================
     elif st.session_state["active_mode"] == "live":
-        st.markdown('<div class="mn-card">', unsafe_allow_html=True)
-        st.markdown("### 🎙️ Live Meeting Transcription")
-        st.markdown("<div style='font-size:0.85rem;color:#6B7280;margin-top:-6px;margin-bottom:14px;'>Streams live microphone audio in real time using Web Speech API with audio waveform visualization.</div>", unsafe_allow_html=True)
+        st.markdown('<div class="content-card">', unsafe_allow_html=True)
+        st.markdown("#### Live Meeting Transcription")
+        st.caption("Captures microphone speech in real time with live audio activity and incremental text streaming.")
 
-        # Render custom component for real-time live transcription
-        live_result = live_transcription_comp()
+        # Embed custom live transcription component
+        live_data = live_transcription_comp()
 
-        if live_result and isinstance(live_result, dict):
-            if live_result.get("transcript"):
-                st.session_state["live_transcript_text"] = live_result["transcript"]
-            if "duration_seconds" in live_result:
-                st.session_state["live_duration_seconds"] = live_result["duration_seconds"]
-            if live_result.get("is_stopped"):
-                st.session_state["live_is_stopped"] = True
+        if live_data and isinstance(live_data, dict):
+            if live_data.get("transcript"):
+                st.session_state["live_transcript_text"] = live_data["transcript"]
+            if "duration_seconds" in live_data:
+                st.session_state["live_duration_seconds"] = live_data["duration_seconds"]
 
         st.write("")
-        st.markdown("**Live Meeting Transcript (Review & Edit):**")
-        edited_live_transcript = st.text_area(
-            "Review & edit live transcript:",
+        st.markdown("**Live Transcript (Review & Edit):**")
+        edited_live_text = st.text_area(
+            "Live transcript review:",
             value=st.session_state.get("live_transcript_text", ""),
-            height=180,
+            height=160,
             label_visibility="collapsed",
-            placeholder="Live recognized speech will stream here in real-time. Once stopped, you can edit names, terms, or dates here before generating minutes."
+            placeholder="Spoken words will stream incrementally into the panel above. After stopping the meeting, the full transcript will be preserved here for review and editing."
         )
-        st.session_state["live_transcript_text"] = edited_live_transcript
+        st.session_state["live_transcript_text"] = edited_live_text
         st.markdown('</div>', unsafe_allow_html=True)
 
 
     # =========================================================================
-    # SHARED OPTIONS ROW & GENERATE BUTTON
+    # SHARED CONFIGURATION & GENERATE BUTTON
     # =========================================================================
-    st.markdown('<div class="mn-card" style="padding:18px 22px;">', unsafe_allow_html=True)
-    o1, o2, o3 = st.columns([1, 1, 1.4])
-    with o1:
-        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#6B7280;text-transform:uppercase;'>Output Language</div>", unsafe_allow_html=True)
-        output_lang = st.selectbox(
-            "lang_sel",
+    st.markdown('<div class="content-card" style="padding:16px 20px;">', unsafe_allow_html=True)
+    cfg1, cfg2, cfg3 = st.columns([1, 1, 1.4])
+    with cfg1:
+        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748B;text-transform:uppercase;'>Output Language</div>", unsafe_allow_html=True)
+        out_language = st.selectbox(
+            "lang_select",
             ["English", "Hindi", "Spanish", "French", "German"],
             label_visibility="collapsed"
         )
-    with o2:
-        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#6B7280;text-transform:uppercase;'>Meeting Type</div>", unsafe_allow_html=True)
-        meeting_type = st.selectbox(
-            "type_sel",
+    with cfg2:
+        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748B;text-transform:uppercase;'>Meeting Type</div>", unsafe_allow_html=True)
+        m_type = st.selectbox(
+            "type_select",
             ["General", "Standup", "Review", "Brainstorm", "Planning"],
             label_visibility="collapsed"
         )
-    with o3:
-        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#6B7280;text-transform:uppercase;'>Include in Minutes</div>", unsafe_allow_html=True)
-        c_inc1, c_inc2 = st.columns(2)
-        with c_inc1:
-            inc_summary = st.checkbox("Summary", value=True, key="chk_inc_sum")
-            inc_actions = st.checkbox("Action Items", value=True, key="chk_inc_act")
-        with c_inc2:
-            inc_keypts = st.checkbox("Key Points", value=True, key="chk_inc_kp")
-            inc_next = st.checkbox("Next Meeting", value=True, key="chk_inc_next")
+    with cfg3:
+        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748B;text-transform:uppercase;'>Include Sections</div>", unsafe_allow_html=True)
+        inc_c1, inc_c2 = st.columns(2)
+        with inc_c1:
+            inc_summary = st.checkbox("Summary", value=True, key="cfg_inc_sum")
+            inc_actions = st.checkbox("Action Items", value=True, key="cfg_inc_act")
+        with inc_c2:
+            inc_keypts = st.checkbox("Key Points", value=True, key="cfg_inc_kp")
+            inc_next = st.checkbox("Next Meeting", value=True, key="cfg_inc_next")
 
     st.write("")
-    generate_clicked = st.button("✨  Generate Meeting Minutes", type="primary", use_container_width=True)
+    btn_generate = st.button("Generate Meeting Minutes", type="primary", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Pipeline Trigger ──────────────────────────────────────────────────────
-    if generate_clicked:
-        # Determine current active transcript
+    # ── Generate Execution ──
+    if btn_generate:
+        # Determine source transcript
         if st.session_state["active_mode"] == "upload":
             chosen_text = st.session_state.get("upload_transcript_text", "").strip()
-            source_label = "Uploaded Audio"
+            source_tag = "Uploaded Audio"
         else:
             chosen_text = st.session_state.get("live_transcript_text", "").strip()
-            source_label = "Live Meeting"
+            source_tag = "Live Meeting"
 
         if not chosen_text:
             if st.session_state["active_mode"] == "upload":
-                st.error("⚠️ No transcript available. Please upload an audio file and click **Transcribe Audio Recording**, or paste text into the transcript box.")
+                st.error("No transcript available. Upload an audio recording and click Transcribe Audio Recording, or paste text into the transcript area.")
             else:
-                st.error("⚠️ No live transcript recorded. Please click **Start Live Meeting**, speak into your microphone, or paste/type text into the editor.")
+                st.error("No live transcript recorded. Click Start Live Meeting and speak into your microphone, or paste text into the transcript area.")
             st.stop()
 
-        # Build Transcript object
+        # Build Transcript model
         lines = [l.strip() for l in chosen_text.split("\n") if l.strip()]
-        segments = [
-            TranscriptSegment(start=0.0, end=0.0, text=line)
-            for line in lines
-        ]
+        segments = [TranscriptSegment(start=0.0, end=0.0, text=l) for l in lines]
         active_transcript = Transcript(
             segments=segments,
             full_text=chosen_text,
@@ -567,34 +571,33 @@ with col_left:
         )
         st.session_state["active_transcript_obj"] = active_transcript
 
-        # Execute shared generation pipeline
-        with st.status("🚀 Processing Meeting Minutes...", expanded=True) as status_box:
+        with st.status("Processing Meeting Minutes...", expanded=True) as status_box:
             progress_bar = st.progress(0.1)
             status_text = st.empty()
 
-            def pipeline_progress(msg: str, frac: float):
+            def update_progress(msg: str, frac: float):
                 status_text.markdown(f"**{msg}**")
                 progress_bar.progress(min(1.0, max(0.0, frac)))
 
             try:
-                # 1. Generate Structured Minutes via Gemini
+                # 1. Structured Minutes Generation
                 minutes = generate_meeting_minutes(
                     transcript=active_transcript,
                     model=selected_model,
-                    language=output_lang,
-                    meeting_type=meeting_type,
+                    language=out_language,
+                    meeting_type=m_type,
                     include_features={
                         "Summary": inc_summary,
                         "Action Items": inc_actions,
                         "Key Points": inc_keypts,
                         "Next Meeting": inc_next
                     },
-                    progress_callback=pipeline_progress
+                    progress_callback=update_progress
                 )
                 st.session_state["meeting_minutes"] = minutes
 
-                # 2. Run Faithfulness Verification
-                pipeline_progress("Auditing action items for faithfulness against transcript...", 0.85)
+                # 2. Faithfulness Verification
+                update_progress("Auditing action items for faithfulness against transcript...", 0.85)
                 client = get_gemini_client()
                 audit_report = verify_meeting_minutes_faithfulness(
                     minutes=minutes,
@@ -604,20 +607,27 @@ with col_left:
                 )
                 st.session_state["verification_results"] = audit_report
 
-                # Prepend to recent meetings
-                st.session_state["recent_meetings"].insert(0, {
+                # 3. Save to Real Meeting History
+                new_entry = {
+                    "id": f"mtg_{uuid.uuid4().hex[:8]}",
                     "title": minutes.meeting_title,
-                    "date": "Today",
-                    "duration": f"{len(lines)} lines"
-                })
+                    "date": time.strftime("%b %d, %Y - %I:%M %p"),
+                    "duration": f"{len(lines)} lines",
+                    "minutes": minutes,
+                    "transcript": active_transcript,
+                    "verification": audit_report,
+                    "source": source_tag
+                }
+                st.session_state["saved_meetings"].insert(0, new_entry)
+                st.session_state["selected_meeting_id"] = new_entry["id"]
 
-                pipeline_progress("Completed successfully!", 1.0)
-                status_box.update(label="✅ Meeting Minutes Generated & Audited!", state="complete", expanded=False)
+                update_progress("Completed successfully.", 1.0)
+                status_box.update(label="Meeting Minutes Generated & Audited", state="complete", expanded=False)
                 st.rerun()
 
-            except Exception as exc:
-                status_box.update(label="❌ Pipeline Execution Error", state="error", expanded=True)
-                st.error(f"Error generating minutes: {str(exc)}")
+            except Exception as e:
+                status_box.update(label="Pipeline Execution Error", state="error", expanded=True)
+                st.error(f"Error generating minutes: {str(e)}")
 
 
     # =========================================================================
@@ -628,33 +638,33 @@ with col_left:
         audit = st.session_state.get("verification_results", {})
 
         st.write("")
-        st.markdown("## 📊 Meeting Intelligence Output")
+        st.markdown("### Meeting Intelligence Output")
 
         # Top stat metrics
         total_actions = len(mins.action_items)
         supported_count = sum(1 for a in mins.action_items if a.verification_status == "SUPPORTED")
         faith_score = round((supported_count / max(1, total_actions)) * 100) if total_actions else 100
 
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        with m_col1:
-            st.markdown(f'<div class="stat-card"><div class="stat-title">Key Decisions</div><div class="stat-value">{len(mins.key_decisions)}</div></div>', unsafe_allow_html=True)
-        with m_col2:
-            st.markdown(f'<div class="stat-card"><div class="stat-title">Action Items</div><div class="stat-value">{total_actions}</div></div>', unsafe_allow_html=True)
-        with m_col3:
-            st.markdown(f'<div class="stat-card"><div class="stat-title">Discussion Points</div><div class="stat-value">{len(mins.key_discussion_points)}</div></div>', unsafe_allow_html=True)
-        with m_col4:
-            st.markdown(f'<div class="stat-card"><div class="stat-title">Faithfulness Score</div><div class="stat-value" style="color:#10B981;">{faith_score}%</div></div>', unsafe_allow_html=True)
+        stat1, stat2, stat3, stat4 = st.columns(4)
+        with stat1:
+            st.markdown(f'<div class="metric-box"><div class="metric-lbl">Key Decisions</div><div class="metric-val">{len(mins.key_decisions)}</div></div>', unsafe_allow_html=True)
+        with stat2:
+            st.markdown(f'<div class="metric-box"><div class="metric-lbl">Action Items</div><div class="metric-val">{total_actions}</div></div>', unsafe_allow_html=True)
+        with stat3:
+            st.markdown(f'<div class="metric-box"><div class="metric-lbl">Discussion Points</div><div class="metric-val">{len(mins.key_discussion_points)}</div></div>', unsafe_allow_html=True)
+        with stat4:
+            st.markdown(f'<div class="metric-box"><div class="metric-lbl">Faithfulness Score</div><div class="metric-val" style="color:#10B981;">{faith_score}%</div></div>', unsafe_allow_html=True)
 
         st.write("")
 
-        # 4 Output Tabs
-        res_tab1, res_tab2, res_tab3, res_tab4 = st.tabs(["📋  Minutes", "🛡️  Faithfulness Audit", "📜  Transcript", "💾  Export"])
+        # 4 Output Tabs without emojis
+        t_min, t_audit, t_trans, t_exp = st.tabs(["Minutes", "Faithfulness Audit", "Transcript", "Export"])
 
         # Tab 1: Minutes
-        with res_tab1:
+        with t_min:
             st.markdown(f"### {mins.meeting_title}")
             if mins.meeting_date and mins.meeting_date != "Not specified":
-                st.caption(f"📅 Date: {mins.meeting_date}")
+                st.caption(f"Date: {mins.meeting_date}")
 
             st.markdown("#### 1. Executive Summary")
             st.info(mins.meeting_summary)
@@ -667,7 +677,7 @@ with col_left:
             st.markdown("#### 3. Decisions Made")
             if mins.key_decisions:
                 for d in mins.key_decisions:
-                    st.markdown(f"✅ **{d}**")
+                    st.markdown(f"• [Agreed] **{d}**")
             else:
                 st.write("_No explicit decisions recorded._")
 
@@ -678,98 +688,97 @@ with col_left:
                         st.markdown(f"**{idx}. {item.description}**")
                         c_a, c_b, c_c = st.columns(3)
                         with c_a:
-                            st.markdown(f"👤 **Responsible:** `{item.owner}`")
+                            st.markdown(f"Responsible Person: `{item.owner}`")
                         with c_b:
-                            st.markdown(f"📅 **Deadline:** `{item.deadline}`")
+                            st.markdown(f"Deadline: `{item.deadline}`")
                         with c_c:
                             if item.verification_status == "SUPPORTED":
-                                st.markdown('<span class="badge-sup">🟢 SUPPORTED</span>', unsafe_allow_html=True)
+                                st.markdown('<span class="status-pill supported">SUPPORTED</span>', unsafe_allow_html=True)
                             elif item.verification_status == "PARTIALLY_SUPPORTED":
-                                st.markdown('<span class="badge-part">🟡 PARTIAL</span>', unsafe_allow_html=True)
+                                st.markdown('<span class="status-pill partial">PARTIAL</span>', unsafe_allow_html=True)
                             else:
-                                st.markdown('<span class="badge-unsup">🔴 UNSUPPORTED</span>', unsafe_allow_html=True)
+                                st.markdown('<span class="status-pill unsupported">UNSUPPORTED</span>', unsafe_allow_html=True)
 
-                        st.markdown(f'<div class="evidence-quote"><b>Evidence Quote:</b> "{item.evidence}"</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="evidence-callout">Transcript Evidence: "{item.evidence}"</div>', unsafe_allow_html=True)
                         if item.verification_explanation:
-                            st.caption(f"🔍 Audit Note: {item.verification_explanation}")
+                            st.caption(f"Audit Note: {item.verification_explanation}")
                         st.divider()
             else:
                 st.write("_No action items identified._")
 
             if mins.next_meeting_details and mins.next_meeting_details != "Not specified":
                 st.markdown("#### 5. Next Meeting Details")
-                st.markdown(f"🗓️ **{mins.next_meeting_details}**")
+                st.markdown(f"Next Meeting: **{mins.next_meeting_details}**")
 
             if mins.unresolved_questions:
                 st.markdown("#### 6. Unresolved Questions")
                 for q in mins.unresolved_questions:
-                    st.markdown(f"❓ {q}")
+                    st.markdown(f"• Open Question: {q}")
 
         # Tab 2: Faithfulness Audit
-        with res_tab2:
-            st.markdown("### 🛡️ Hallucination & Evidence Audit")
-            st.markdown("Every generated action item is audited against the original spoken transcript using Natural Language Inference (NLI) to ensure zero fabricated commitments or deadlines.")
+        with t_audit:
+            st.markdown("#### Faithfulness & Evidence Audit")
+            st.caption("Each extracted action item is audited against the source transcript using Natural Language Inference (NLI) to prevent fabricated commitments or deadlines.")
 
             if mins.action_items:
                 for idx, item in enumerate(mins.action_items, 1):
                     st.markdown(f"**Item {idx}:** {item.description}")
-                    st.markdown(f"- **Owner Stated:** `{item.owner}`")
-                    st.markdown(f"- **Deadline Stated:** `{item.deadline}`")
-                    st.markdown(f"- **Transcript Evidence:** *\"{item.evidence}\"*")
-                    st.markdown(f"- **Verification Status:** **{item.verification_status}**")
+                    st.markdown(f"- Owner: `{item.owner}`")
+                    st.markdown(f"- Deadline: `{item.deadline}`")
+                    st.markdown(f"- Evidence: *\"{item.evidence}\"*")
+                    st.markdown(f"- Status: **{item.verification_status}**")
                     if item.verification_explanation:
-                        st.markdown(f"- **Reasoning:** {item.verification_explanation}")
+                        st.markdown(f"- Audit Note: {item.verification_explanation}")
                     st.divider()
             else:
                 st.write("No action items to audit.")
 
         # Tab 3: Transcript Viewer
-        with res_tab3:
-            st.markdown("### 📜 Meeting Transcript")
+        with t_trans:
+            st.markdown("#### Meeting Transcript")
             active_tr = st.session_state.get("active_transcript_obj")
             if active_tr:
-                st.text_area("Transcript text:", value=active_tr.formatted_transcript, height=350, disabled=True)
+                st.text_area("Full transcript text:", value=active_tr.formatted_transcript, height=350, disabled=True)
 
         # Tab 4: Export (PDF & TXT)
-        with res_tab4:
-            st.markdown("### 💾 Export Meeting Minutes")
-            st.write("Download your structured meeting minutes in your preferred format:")
+        with t_exp:
+            st.markdown("#### Export Meeting Minutes")
+            st.caption("Download your structured meeting minutes in PDF, plain text, Markdown, or JSON formats.")
 
-            # Generate export data
             try:
                 pdf_bytes = generate_minutes_pdf(mins)
                 txt_data = generate_minutes_txt(mins)
                 md_data = generate_minutes_markdown(mins)
                 json_data = json.dumps(mins.model_dump(), indent=2)
 
-                exp1, exp2, exp3, exp4 = st.columns(4)
-                with exp1:
+                x1, x2, x3, x4 = st.columns(4)
+                with x1:
                     st.download_button(
-                        label="📥 Download PDF",
+                        label="Download PDF",
                         data=pdf_bytes,
                         file_name=f"{mins.meeting_title.replace(' ', '_').lower()}_minutes.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
-                with exp2:
+                with x2:
                     st.download_button(
-                        label="📥 Download TXT",
+                        label="Download TXT",
                         data=txt_data,
                         file_name=f"{mins.meeting_title.replace(' ', '_').lower()}_minutes.txt",
                         mime="text/plain",
                         use_container_width=True
                     )
-                with exp3:
+                with x3:
                     st.download_button(
-                        label="📥 Download Markdown",
+                        label="Download Markdown",
                         data=md_data,
                         file_name=f"{mins.meeting_title.replace(' ', '_').lower()}_minutes.md",
                         mime="text/markdown",
                         use_container_width=True
                     )
-                with exp4:
+                with x4:
                     st.download_button(
-                        label="📥 Download JSON",
+                        label="Download JSON",
                         data=json_data,
                         file_name=f"{mins.meeting_title.replace(' ', '_').lower()}_minutes.json",
                         mime="application/json",
@@ -779,38 +788,54 @@ with col_left:
                 st.error(f"Export error: {str(exp_err)}")
 
 
-# ─── Right Column: Recent Meetings Widget ─────────────────────────────────────
-with col_right:
-    st.markdown("""
-    <div style="display:flex;justify-content:flex-end;align-items:center;gap:14px;margin-bottom:20px;">
-        <div style="font-size:18px;cursor:pointer;color:#6B7280;">🔔</div>
-        <div style="width:34px;height:34px;background:#111827;color:#FFFFFF;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;">P</div>
-    </div>
-    """, unsafe_allow_html=True)
+# ─── Right Column: REAL Persistent Recent Meetings ────────────────────────────
+with col_recent:
+    st.markdown('<div class="content-card">', unsafe_allow_html=True)
+    st.markdown("#### Recent Meetings")
+    st.caption("Recorded meetings from this session appear here. Click any meeting to open its full details.")
 
-    st.markdown('<div class="mn-card">', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-        <span style="font-size:18px;">🕒</span>
-        <span style="font-weight:700;font-size:1rem;color:#111827;">Recent Meetings</span>
-    </div>
-    """, unsafe_allow_html=True)
+    saved_list = st.session_state.get("saved_meetings", [])
 
-    for item in st.session_state.get("recent_meetings", [])[:5]:
-        st.markdown(f"""
-        <div class="recent-item">
-            <div style="display:flex;align-items:center;gap:10px;">
-                <span style="font-size:16px;color:#9CA3AF;">📄</span>
-                <div>
-                    <div class="recent-title">{item['title']}</div>
-                    <div class="recent-meta">{item['date']} · {item['duration']}</div>
-                </div>
-            </div>
-            <div style="color:#9CA3AF;font-size:14px;">⋮</div>
+    if not saved_list:
+        st.markdown("""
+        <div style="border:1.5px dashed #E2E8F0;border-radius:8px;padding:20px;text-align:center;color:#64748B;font-size:0.84rem;margin:12px 0;">
+            No recorded meetings yet.<br/>Upload audio or start a live meeting to save your first minutes.
         </div>
         """, unsafe_allow_html=True)
+    else:
+        for idx, mtg in enumerate(saved_list):
+            is_active_mtg = st.session_state.get("selected_meeting_id") == mtg["id"]
+            border_color = "#0F172A" if is_active_mtg else "#E2E8F0"
+            bg_color = "#F8FAFC" if is_active_mtg else "#FFFFFF"
 
-    st.write("")
-    if st.button("View All Meetings →", key="btn_view_all_meetings", use_container_width=True):
-        st.info("Showing past 5 meetings from session history.")
+            st.markdown(f"""
+            <div style="border:1px solid {border_color};background:{bg_color};border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+                <div style="font-weight:700;font-size:0.88rem;color:#0F172A;">{mtg['title']}</div>
+                <div style="font-size:0.75rem;color:#64748B;margin-top:2px;">{mtg['date']} • {mtg['source']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            btn_col1, btn_col2 = st.columns([2, 1])
+            with btn_col1:
+                if st.button("Open Details", key=f"btn_open_{mtg['id']}", use_container_width=True):
+                    st.session_state["meeting_minutes"] = mtg["minutes"]
+                    st.session_state["active_transcript_obj"] = mtg["transcript"]
+                    st.session_state["verification_results"] = mtg["verification"]
+                    st.session_state["selected_meeting_id"] = mtg["id"]
+                    st.rerun()
+            with btn_col2:
+                if st.button("Delete", key=f"btn_del_{mtg['id']}", use_container_width=True):
+                    st.session_state["saved_meetings"] = [m for m in st.session_state["saved_meetings"] if m["id"] != mtg["id"]]
+                    if st.session_state.get("selected_meeting_id") == mtg["id"]:
+                        st.session_state["meeting_minutes"] = None
+                        st.session_state["selected_meeting_id"] = None
+                    st.rerun()
+
+        st.write("")
+        if st.button("Clear History", key="btn_clear_all_meetings", use_container_width=True):
+            st.session_state["saved_meetings"] = []
+            st.session_state["meeting_minutes"] = None
+            st.session_state["selected_meeting_id"] = None
+            st.rerun()
+
     st.markdown('</div>', unsafe_allow_html=True)

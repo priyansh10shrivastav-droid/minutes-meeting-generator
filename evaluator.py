@@ -152,7 +152,7 @@ def verify_action_item_llm(
     item: ActionItem,
     index: int,
     transcript_text: str,
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.5-flash"
 ) -> FaithfulnessVerificationResult:
     """Uses Gemini to perform natural language inference (NLI) check of action item against transcript."""
     system_prompt = (
@@ -162,6 +162,14 @@ def verify_action_item_llm(
         "1. SUPPORTED: The task is explicitly committed to, the cited quote is genuine, and owner/deadline are either explicitly mentioned or marked 'Not specified'.\n"
         "2. PARTIALLY_SUPPORTED: The topic was discussed, but the owner or deadline was assumed without agreement, or the quote only partially supports it.\n"
         "3. UNSUPPORTED: The action item is fabricated, contrary to the transcript, or the cited quote does not support it.\n\n"
+        "Respond ONLY with a valid JSON object matching:\n"
+        "{\n"
+        '  "status": "SUPPORTED" | "PARTIALLY_SUPPORTED" | "UNSUPPORTED",\n'
+        '  "quote_found": true | false,\n'
+        '  "owner_grounded": true | false,\n'
+        '  "deadline_grounded": true | false,\n'
+        '  "explanation": "Clear diagnostic reasoning"\n'
+        "}\n\n"
         "Remember: An owner or deadline of 'Not specified' is FAITHFUL if the transcript does not specify one."
     )
 
@@ -179,7 +187,6 @@ def verify_action_item_llm(
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         response_mime_type="application/json",
-        response_schema=LLMEvalResponse,
         temperature=0.0
     )
 
@@ -208,7 +215,7 @@ def verify_meeting_minutes_faithfulness(
     minutes: MeetingMinutes,
     transcript: Transcript,
     client: Optional[genai.Client] = None,
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.5-flash"
 ) -> List[FaithfulnessVerificationResult]:
     """
     Verifies all action items in meeting minutes against the transcript.

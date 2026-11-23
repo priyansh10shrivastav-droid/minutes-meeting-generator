@@ -144,9 +144,9 @@ def generate_minutes_pdf(minutes: MeetingMinutes) -> bytes:
     elements = []
 
     # Title & Date
-    elements.append(Paragraph(f"📋 {minutes.meeting_title}", title_style))
+    elements.append(Paragraph(f"{minutes.meeting_title}", title_style))
     if minutes.meeting_date and minutes.meeting_date != "Not specified":
-        elements.append(Paragraph(f"📅 Date: {minutes.meeting_date}", date_style))
+        elements.append(Paragraph(f"Date: {minutes.meeting_date}", date_style))
     else:
         elements.append(Spacer(1, 4))
     
@@ -167,7 +167,7 @@ def generate_minutes_pdf(minutes: MeetingMinutes) -> bytes:
     elements.append(Paragraph("3. Decisions Made", h1_style))
     if minutes.key_decisions:
         for d in minutes.key_decisions:
-            elements.append(Paragraph(f"✅ <b>{d}</b>", body_style))
+            elements.append(Paragraph(f"[Agreed] <b>{d}</b>", body_style))
     else:
         elements.append(Paragraph("<i>No explicit decisions recorded.</i>", body_style))
     elements.append(Spacer(1, 4))
@@ -211,14 +211,14 @@ def generate_minutes_pdf(minutes: MeetingMinutes) -> bytes:
     # Next Meeting Details
     if minutes.next_meeting_details and minutes.next_meeting_details != "Not specified":
         elements.append(Paragraph("5. Next Meeting Details", h1_style))
-        elements.append(Paragraph(f"🗓️ {minutes.next_meeting_details}", body_style))
+        elements.append(Paragraph(f"Next Meeting: {minutes.next_meeting_details}", body_style))
         elements.append(Spacer(1, 4))
 
     # Unresolved Questions
     if minutes.unresolved_questions:
         elements.append(Paragraph("6. Unresolved Questions & Follow-ups", h1_style))
         for q in minutes.unresolved_questions:
-            elements.append(Paragraph(f"❓ {q}", body_style))
+            elements.append(Paragraph(f"Open Question: {q}", body_style))
 
     doc.build(elements, canvasmaker=MinutesNumberedCanvas)
     buffer.seek(0)
@@ -250,7 +250,7 @@ def generate_minutes_txt(minutes: MeetingMinutes) -> str:
     lines.append("-" * 40)
     if minutes.key_decisions:
         for d in minutes.key_decisions:
-            lines.append(f"  [x] {d}")
+            lines.append(f"  [Agreed] {d}")
     else:
         lines.append("  (No explicit decisions recorded)")
     lines.append("")
@@ -289,7 +289,7 @@ def generate_minutes_txt(minutes: MeetingMinutes) -> str:
 def generate_minutes_markdown(minutes: MeetingMinutes) -> str:
     """Formats meeting minutes as GitHub-flavored Markdown."""
     lines = [
-        f"# 📋 {minutes.meeting_title}",
+        f"# {minutes.meeting_title}",
         f"**Date:** {minutes.meeting_date}  ",
         "---",
         "## 1. Executive Summary",
@@ -305,7 +305,7 @@ def generate_minutes_markdown(minutes: MeetingMinutes) -> str:
     lines.append("## 3. Decisions Made")
     if minutes.key_decisions:
         for d in minutes.key_decisions:
-            lines.append(f"- ✅ **{d}**")
+            lines.append(f"- [Agreed] **{d}**")
     else:
         lines.append("_No explicit decisions recorded._")
     lines.append("")
@@ -313,11 +313,10 @@ def generate_minutes_markdown(minutes: MeetingMinutes) -> str:
     lines.append("## 4. Action Items")
     if minutes.action_items:
         for idx, item in enumerate(minutes.action_items, 1):
-            status_emoji = "🟢" if item.verification_status == "SUPPORTED" else ("🟡" if item.verification_status == "PARTIALLY_SUPPORTED" else "🔴")
             lines.append(f"### {idx}. {item.description}")
             lines.append(f"- **Responsible Person:** `{item.owner}`")
             lines.append(f"- **Deadline:** `{item.deadline}`")
-            lines.append(f"- **Audit Status:** {status_emoji} `{item.verification_status}`")
+            lines.append(f"- **Audit Status:** `[{item.verification_status}]`")
             lines.append(f"- **Evidence Quote:** > *\"{item.evidence}\"*")
             lines.append("")
     else:
@@ -325,12 +324,12 @@ def generate_minutes_markdown(minutes: MeetingMinutes) -> str:
 
     if minutes.next_meeting_details and minutes.next_meeting_details != "Not specified":
         lines.append("## 5. Next Meeting Details")
-        lines.append(f"🗓️ **{minutes.next_meeting_details}**\n")
+        lines.append(f"Next Meeting: **{minutes.next_meeting_details}**\n")
 
     if minutes.unresolved_questions:
         lines.append("## 6. Unresolved Questions")
         for q in minutes.unresolved_questions:
-            lines.append(f"- ❓ {q}")
+            lines.append(f"- Question: {q}")
         lines.append("")
 
     return "\n".join(lines)

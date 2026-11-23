@@ -42,12 +42,25 @@ Your top priority is ABSOLUTE FAITHFULNESS to the meeting transcript.
 
 CRITICAL INTEGRITY RULES:
 1. STRUCTURED OUTPUT MANDATE:
-   - Provide an Executive Summary highlighting the core discussion.
-   - Extract Key Discussion Points covering the main topics debated or reviewed.
-   - Extract Decisions Made (only explicit agreements reached).
-   - Extract Action Items with assigned Responsible Persons (owners), Deadlines, and verbatim Evidence quotes.
-   - Extract Next Meeting Details if scheduled, otherwise "Not specified".
-   - Extract Unresolved Questions left open.
+   You must respond ONLY with a valid JSON object matching the following structure:
+   {
+     "meeting_title": "Descriptive Meeting Title",
+     "meeting_date": "Date if explicitly mentioned or 'Not specified'",
+     "meeting_summary": "Executive summary highlighting core discussion and outcomes",
+     "key_discussion_points": ["Point 1", "Point 2"],
+     "key_decisions": ["Decision 1", "Decision 2"],
+     "action_items": [
+       {
+         "description": "Specific actionable task",
+         "owner": "Explicit owner or 'Not specified'",
+         "deadline": "Explicit deadline or 'Not specified'",
+         "evidence": "Verbatim quote from transcript supporting this task",
+         "verification_status": "SUPPORTED"
+       }
+     ],
+     "unresolved_questions": ["Open question 1"],
+     "next_meeting_details": "Next meeting time/place if mentioned or 'Not specified'"
+   }
 
 2. NEVER INVENT OR HALLUCINATE:
    - Never invent decisions, action items, owners, deadlines, or facts.
@@ -61,7 +74,7 @@ CRITICAL INTEGRITY RULES:
    - Do NOT guess names or deduce deadlines based on external context.
 
 4. PRESERVE DIRECT TRANSCRIPT EVIDENCE:
-   - Every single action item MUST include verbatim quotes from the transcript with timestamp references (e.g. '[04:12 - 04:30] "I will finish the deployment by Friday"') in the evidence field.
+   - Every single action item MUST include verbatim quotes from the transcript (e.g. '[04:12 - 04:30] "I will finish the deployment by Friday"') in the evidence field.
    - If there is no explicit supporting quote in the transcript, DO NOT create the action item.
 
 5. UNRESOLVED QUESTIONS:
@@ -69,19 +82,47 @@ CRITICAL INTEGRITY RULES:
 """
 
 MAP_CHUNK_PROMPT = """Analyze the following transcript chunk from a meeting.
-Extract:
-- Summary points of topics discussed in this chunk
-- Explicit decisions agreed upon in this chunk
-- Action items explicitly committed to in this chunk (with verbatim quotes and timestamps)
-- Questions or concerns left unanswered in this chunk
+You must respond ONLY with a valid JSON object matching:
+{
+  "summary_points": ["Key summary of topic"],
+  "decisions": ["Agreed decision in this chunk"],
+  "action_items": [
+    {
+      "description": "Specific actionable task",
+      "owner": "Owner or 'Not specified'",
+      "deadline": "Deadline or 'Not specified'",
+      "evidence": "Verbatim quote from transcript"
+    }
+  ],
+  "open_questions": ["Question left unanswered in this chunk"]
+}
 
 Remember:
 - If owner is not explicitly stated, owner = "Not specified"
 - If deadline is not explicitly stated, deadline = "Not specified"
-- Always quote exact evidence with timestamps.
+- Always quote exact evidence.
 """
 
 REDUCE_SYNTHESIS_PROMPT = """Synthesize the intermediate analyses from all meeting chunks into a unified, coherent, and non-redundant set of structured meeting minutes.
+You must respond ONLY with a valid JSON object matching the MeetingMinutes schema:
+{
+  "meeting_title": "Descriptive Meeting Title",
+  "meeting_date": "Date if mentioned or 'Not specified'",
+  "meeting_summary": "Comprehensive meeting summary",
+  "key_discussion_points": ["Point 1", "Point 2"],
+  "key_decisions": ["Decision 1", "Decision 2"],
+  "action_items": [
+    {
+      "description": "Specific actionable task",
+      "owner": "Owner or 'Not specified'",
+      "deadline": "Deadline or 'Not specified'",
+      "evidence": "Verbatim transcript quote",
+      "verification_status": "SUPPORTED"
+    }
+  ],
+  "unresolved_questions": ["Unresolved question 1"],
+  "next_meeting_details": "Next meeting details or 'Not specified'"
+}
 
 Instructions:
 1. Deduplicate decisions and action items that appeared across overlapping chunks.
@@ -166,42 +207,55 @@ def _gemini_generate_with_retry(
     max_attempts: int = 4
 ) -> str:
     """
-    Calls client.models.generate_content with exponential backoff retry.
-    Retries on 503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED, 500, and network errors.
-    Waits: 5s → 15s → 45s between attempts (jittered).
-    Returns the raw response text.
+    Calls client.models.generate_content with exponential backoff and model fallback.
+    Retries on 503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED, 504 DEADLINE_EXCEEDED, 500, and network errors.
+    If a model hits quota (429) or persistent 504, falls back to alternate flash models.
     """
+    candidate_models = [model]
+    for alt in ["gemini-3.5-flash", "gemini-3.8-flash"]:
+        if alt not in candidate_models:
+            candidate_models.append(alt)
+
     last_exc = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config
-            )
-            return response.text
-        except Exception as exc:
-            last_exc = exc
-            if not _is_retryable_error(exc):
-                raise  # Non-retryable — bubble up immediately
-            wait_secs = min(5 * (3 ** (attempt - 1)), 60)  # 5, 15, 45, capped at 60
-            logger.warning(
-                f"Gemini API transient error (attempt {attempt}/{max_attempts}): {exc}. "
-                f"Retrying in {wait_secs}s..."
-            )
-            if attempt < max_attempts:
-                time.sleep(wait_secs)
+    for current_model in candidate_models:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=contents,
+                    config=config
+                )
+                if response.text and response.text.strip():
+                    return response.text
+                raise RuntimeError("Empty response received from Gemini API")
+            except Exception as exc:
+                last_exc = exc
+                exc_str = str(exc)
+                # If 429 quota exhausted or 404 model not found on this model, switch immediately to next candidate
+                if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str or "404" in exc_str:
+                    logger.warning(f"Model {current_model} unavailable ({exc_str[:120]}). Switching to next candidate model...")
+                    break  # Break inner attempt loop to try next model in candidate_models
+
+                if not _is_retryable_error(exc) and "504" not in exc_str:
+                    raise  # Non-retryable — bubble up immediately
+
+                wait_secs = min(3 * (2 ** (attempt - 1)), 30)
+                logger.warning(
+                    f"Gemini API transient error with {current_model} (attempt {attempt}/{max_attempts}): {exc}. "
+                    f"Retrying in {wait_secs}s..."
+                )
+                if attempt < max_attempts:
+                    time.sleep(wait_secs)
 
     raise RuntimeError(
-        f"Gemini API failed after {max_attempts} attempts. Last error: {last_exc}"
+        f"Gemini API failed across models {candidate_models}. Last error: {last_exc}"
     )
-
 
 
 def generate_minutes_single_pass(
     client: genai.Client,
     transcript: Transcript,
-    model: str = "gemini-3.8-flash",
+    model: str = "gemini-3.5-flash",
     language: str = "English",
     meeting_type: str = "General",
     include_features: Optional[dict] = None
@@ -231,7 +285,6 @@ def generate_minutes_single_pass(
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT_FAITHFULNESS,
         response_mime_type="application/json",
-        response_schema=MeetingMinutes,
         temperature=0.1
     )
 
@@ -251,7 +304,7 @@ def _analyze_chunk_map(
     client: genai.Client,
     chunk: TranscriptChunk,
     total_chunks: int,
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.5-flash"
 ) -> IntermediateChunkAnalysis:
     """Map step: analyzes a single chunk to extract candidate decisions, actions, and summaries."""
     prompt_content = (
@@ -263,7 +316,6 @@ def _analyze_chunk_map(
     config = types.GenerateContentConfig(
         system_instruction=f"{SYSTEM_PROMPT_FAITHFULNESS}\n\n{MAP_CHUNK_PROMPT}",
         response_mime_type="application/json",
-        response_schema=IntermediateChunkAnalysis,
         temperature=0.1
     )
 
@@ -284,7 +336,7 @@ def _analyze_chunk_map(
 def _synthesize_reduce(
     client: genai.Client,
     intermediate_analyses: List[IntermediateChunkAnalysis],
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.5-flash"
 ) -> MeetingMinutes:
     """Reduce step: synthesizes all intermediate chunk analyses into final minutes."""
     data_dump = [item.model_dump() for item in intermediate_analyses]
@@ -300,7 +352,6 @@ def _synthesize_reduce(
     config = types.GenerateContentConfig(
         system_instruction=f"{SYSTEM_PROMPT_FAITHFULNESS}\n\n{REDUCE_SYNTHESIS_PROMPT}",
         response_mime_type="application/json",
-        response_schema=MeetingMinutes,
         temperature=0.1
     )
 
@@ -319,7 +370,7 @@ def _synthesize_reduce(
 def generate_minutes_map_reduce(
     client: genai.Client,
     transcript: Transcript,
-    model: str = "gemini-3.8-flash",
+    model: str = "gemini-3.5-flash",
     progress_callback: Optional[Callable[[str, float], None]] = None
 ) -> MeetingMinutes:
     """Processes long transcripts using overlapping chunking and Map-Reduce synthesis."""
@@ -358,7 +409,7 @@ def generate_minutes_map_reduce(
 def generate_meeting_minutes(
     transcript: Transcript,
     api_key: Optional[str] = None,
-    model: str = "gemini-3.8-flash",
+    model: str = "gemini-3.5-flash",
     language: str = "English",
     meeting_type: str = "General",
     include_features: Optional[dict] = None,

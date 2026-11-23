@@ -298,14 +298,18 @@
 
     <!-- Live Audio Waveform Activity -->
     <div class="waveform-box">
-      <div class="waveform-label" id="waveLabel">🎤 Mic Activity</div>
+      <div class="waveform-label" id="waveLabel">Microphone Activity</div>
       <canvas id="waveformCanvas"></canvas>
     </div>
 
     <!-- Live Transcript Panel (Streams words in real-time) -->
     <div class="transcript-panel" id="transcriptBox">
       <div class="transcript-empty" id="emptyState">
-        <div style="font-size: 26px; margin-bottom: 6px;">🎙️</div>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 8px;">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" x2="12" y1="19" y2="22"></line>
+        </svg>
         <div>Click <b>Start Live Meeting</b> to capture microphone audio in real time.</div>
         <div style="font-size: 0.78rem; color: #9CA3AF; margin-top: 4px;">Words will appear streaming incrementally as you speak.</div>
       </div>
@@ -317,24 +321,24 @@
     <div class="controls-row">
       <div class="btn-group">
         <button id="btnStart" class="btn-start" onclick="startMeeting()">
-          <span>🎙️</span> Start Live Meeting
+          Start Live Meeting
         </button>
 
         <button id="btnPause" class="btn-pause" onclick="pauseMeeting()" style="display: none;">
-          <span>⏸️</span> Pause
+          Pause
         </button>
 
         <button id="btnResume" class="btn-resume" onclick="resumeMeeting()" style="display: none;">
-          <span>▶️</span> Resume
+          Resume
         </button>
 
         <button id="btnStop" class="btn-stop" onclick="stopMeeting()" style="display: none;">
-          <span>⏹️</span> Stop Meeting
+          Stop Meeting
         </button>
       </div>
 
       <button id="btnSync" class="btn-sync" onclick="syncToStreamlit()" style="display: none;">
-        <span>💾</span> Save Transcript to Editor
+        Save Transcript to Editor
       </button>
     </div>
 
@@ -656,7 +660,7 @@
       statusText.textContent = "MEETING CONCLUDED";
 
       btnStart.style.display = "inline-flex";
-      btnStart.innerHTML = "<span>🔄</span> Start New Meeting";
+      btnStart.textContent = "Start New Meeting";
       btnPause.style.display = "none";
       btnResume.style.display = "none";
       btnStop.style.display = "none";
@@ -673,9 +677,9 @@
       });
 
       // Visual feedback on button
-      btnSync.textContent = "✅ Saved to Editor!";
+      btnSync.textContent = "Saved to Editor";
       setTimeout(() => {
-        btnSync.innerHTML = "<span>💾</span> Save Transcript to Editor";
+        btnSync.textContent = "Save Transcript to Editor";
       }, 1800);
     }
 
