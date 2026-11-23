@@ -31,6 +31,8 @@ from models import (
 )
 from chunking import needs_chunking, create_chunks, TranscriptChunk
 
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(_env_path)
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -39,21 +41,30 @@ SYSTEM_PROMPT_FAITHFULNESS = """You are a meticulous, highly disciplined executi
 Your top priority is ABSOLUTE FAITHFULNESS to the meeting transcript.
 
 CRITICAL INTEGRITY RULES:
-1. NEVER INVENT OR HALLUCINATE:
+1. STRUCTURED OUTPUT MANDATE:
+   - Provide an Executive Summary highlighting the core discussion.
+   - Extract Key Discussion Points covering the main topics debated or reviewed.
+   - Extract Decisions Made (only explicit agreements reached).
+   - Extract Action Items with assigned Responsible Persons (owners), Deadlines, and verbatim Evidence quotes.
+   - Extract Next Meeting Details if scheduled, otherwise "Not specified".
+   - Extract Unresolved Questions left open.
+
+2. NEVER INVENT OR HALLUCINATE:
    - Never invent decisions, action items, owners, deadlines, or facts.
    - A discussion or proposal is NOT a decision unless explicit agreement was reached.
    - An idea or suggestion is NOT an action item unless explicitly assigned or committed to.
 
-2. MANDATORY "Not specified" RULES:
+3. MANDATORY "Not specified" RULES:
    - If an action item does not have an explicit owner named in the transcript, you MUST set owner to "Not specified".
    - If an action item does not have an explicit deadline or timeframe stated in the transcript, you MUST set deadline to "Not specified".
+   - If no next meeting details are mentioned, set next_meeting_details to "Not specified".
    - Do NOT guess names or deduce deadlines based on external context.
 
-3. PRESERVE DIRECT TRANSCRIPT EVIDENCE:
+4. PRESERVE DIRECT TRANSCRIPT EVIDENCE:
    - Every single action item MUST include verbatim quotes from the transcript with timestamp references (e.g. '[04:12 - 04:30] "I will finish the deployment by Friday"') in the evidence field.
    - If there is no explicit supporting quote in the transcript, DO NOT create the action item.
 
-4. UNRESOLVED QUESTIONS:
+5. UNRESOLVED QUESTIONS:
    - Identify open questions, unresolved debates, or follow-ups that were left undecided at the end of the conversation.
 """
 
@@ -190,12 +201,27 @@ def _gemini_generate_with_retry(
 def generate_minutes_single_pass(
     client: genai.Client,
     transcript: Transcript,
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.8-flash",
+    language: str = "English",
+    meeting_type: str = "General",
+    include_features: Optional[dict] = None
 ) -> MeetingMinutes:
     """Generates structured meeting minutes in a single Gemini call for transcripts within context limits."""
     formatted_transcript = transcript.formatted_transcript
 
+    instructions = [
+        f"Output Language: {language}",
+        f"Meeting Type / Context: {meeting_type}",
+    ]
+    if include_features:
+        features_list = [k for k, v in include_features.items() if v]
+        if features_list:
+            instructions.append(f"Focus specifically on including: {', '.join(features_list)}")
+
+    meta_instructions = "\n".join(instructions)
+
     prompt_content = (
+        f"{meta_instructions}\n\n"
         f"Please generate structured meeting minutes based strictly on the following transcript:\n\n"
         f"--- TRANSCRIPT START ---\n"
         f"{formatted_transcript}\n"
@@ -333,6 +359,9 @@ def generate_meeting_minutes(
     transcript: Transcript,
     api_key: Optional[str] = None,
     model: str = "gemini-3.8-flash",
+    language: str = "English",
+    meeting_type: str = "General",
+    include_features: Optional[dict] = None,
     progress_callback: Optional[Callable[[str, float], None]] = None
 ) -> MeetingMinutes:
     """
@@ -353,7 +382,14 @@ def generate_meeting_minutes(
     else:
         if progress_callback:
             progress_callback("Generating meeting minutes via Gemini (single-pass)...", 0.3)
-        minutes = generate_minutes_single_pass(client=client, transcript=transcript, model=model)
+        minutes = generate_minutes_single_pass(
+            client=client,
+            transcript=transcript,
+            model=model,
+            language=language,
+            meeting_type=meeting_type,
+            include_features=include_features
+        )
         if progress_callback:
             progress_callback("Minutes generated successfully!", 1.0)
         return minutes

@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Meeting Transcription</title>
+  <style>
+    :root {
+      --bg: #FFFFFF;
+      --card-bg: #FAFAFA;
+      --border: #E5E7EB;
+      --text-main: #111827;
+      --text-muted: #6B7280;
+      --primary: #111827;
+      --accent-red: #EF4444;
+      --accent-green: #10B981;
+      --accent-yellow: #F59E0B;
+      --accent-purple: #4F46E5;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: transparent;
+      padding: 6px;
+      color: var(--text-main);
+    }
+
+    .live-container {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+    }
+
+    /* Top Status Bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 99px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      background: #FEE2E2;
+      color: #991B1B;
+      transition: all 0.2s ease;
+    }
+
+    .badge-live.recording {
+      background: #FEE2E2;
+      color: #991B1B;
+    }
+
+    .badge-live.paused {
+      background: #FEF3C7;
+      color: #92400E;
+    }
+
+    .badge-live.idle {
+      background: #F3F4F6;
+      color: #6B7280;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .dot.pulse {
+      animation: pulse-dot 1.5s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0% { transform: scale(0.9); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.4; }
+      100% { transform: scale(0.9); opacity: 1; }
+    }
+
+    .timer {
+      font-size: 1.15rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-main);
+      background: #F3F4F6;
+      padding: 4px 10px;
+      border-radius: 8px;
+      letter-spacing: 1px;
+    }
+
+    /* Waveform area */
+    .waveform-box {
+      background: #0B0F19;
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      height: 68px;
+    }
+
+    canvas {
+      flex: 1;
+      height: 48px;
+      width: 100%;
+      display: block;
+    }
+
+    .waveform-label {
+      color: #94A3B8;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    /* Live Transcript Display */
+    .transcript-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      height: 190px;
+      overflow-y: auto;
+      font-size: 0.92rem;
+      line-height: 1.6;
+      margin-bottom: 16px;
+      scroll-behavior: smooth;
+    }
+
+    .transcript-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      text-align: center;
+    }
+
+    .transcript-line {
+      margin-bottom: 8px;
+      animation: fadeIn 0.2s ease-in;
+    }
+
+    .transcript-time {
+      font-weight: 600;
+      color: var(--accent-purple);
+      font-size: 0.78rem;
+      margin-right: 6px;
+    }
+
+    .transcript-interim {
+      color: #6366F1;
+      font-style: italic;
+      display: inline;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Controls Bar */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .btn-start {
+      background: #111827;
+      color: #FFFFFF;
+    }
+    .btn-start:hover {
+      background: #1F2937;
+      transform: translateY(-1px);
+    }
+
+    .btn-pause {
+      background: #F3F4F6;
+      color: #374151;
+      border: 1px solid var(--border);
+    }
+    .btn-pause:hover {
+      background: #E5E7EB;
+    }
+
+    .btn-resume {
+      background: #FEF3C7;
+      color: #92400E;
+      border: 1px solid #FDE68A;
+    }
+    .btn-resume:hover {
+      background: #FDE68A;
+    }
+
+    .btn-stop {
+      background: #DC2626;
+      color: #FFFFFF;
+    }
+    .btn-stop:hover {
+      background: #B91C1C;
+      box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+    }
+
+    .btn-sync {
+      background: #EEF2FF;
+      color: #4F46E5;
+      border: 1px solid #C7D2FE;
+      margin-left: auto;
+    }
+    .btn-sync:hover {
+      background: #E0E7FF;
+    }
+
+    .error-msg {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: #FEE2E2;
+      border: 1px solid #FECACA;
+      border-radius: 8px;
+      color: #991B1B;
+      font-size: 0.82rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="live-container">
+    <!-- Top Status Bar -->
+    <div class="status-bar">
+      <div class="status-left">
+        <div id="statusBadge" class="badge-live idle">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">READY TO RECORD</span>
+        </div>
+      </div>
+      <div class="timer" id="recordingTimer">00:00:00</div>
+    </div>
+
+    <!-- Live Audio Waveform Activity -->
+    <div class="waveform-box">
+      <div class="waveform-label" id="waveLabel">🎤 Mic Activity</div>
+      <canvas id="waveformCanvas"></canvas>
+    </div>
+
+    <!-- Live Transcript Panel (Streams words in real-time) -->
+    <div class="transcript-panel" id="transcriptBox">
+      <div class="transcript-empty" id="emptyState">
+        <div style="font-size: 26px; margin-bottom: 6px;">🎙️</div>
+        <div>Click <b>Start Live Meeting</b> to capture microphone audio in real time.</div>
+        <div style="font-size: 0.78rem; color: #9CA3AF; margin-top: 4px;">Words will appear streaming incrementally as you speak.</div>
+      </div>
+      <div id="transcriptLines"></div>
+      <span class="transcript-interim" id="interimText"></span>
+    </div>
+
+    <!-- Controls Row -->
+    <div class="controls-row">
+      <div class="btn-group">
+        <button id="btnStart" class="btn-start" onclick="startMeeting()">
+          <span>🎙️</span> Start Live Meeting
+        </button>
+
+        <button id="btnPause" class="btn-pause" onclick="pauseMeeting()" style="display: none;">
+          <span>⏸️</span> Pause
+        </button>
+
+        <button id="btnResume" class="btn-resume" onclick="resumeMeeting()" style="display: none;">
+          <span>▶️</span> Resume
+        </button>
+
+        <button id="btnStop" class="btn-stop" onclick="stopMeeting()" style="display: none;">
+          <span>⏹️</span> Stop Meeting
+        </button>
+      </div>
+
+      <button id="btnSync" class="btn-sync" onclick="syncToStreamlit()" style="display: none;">
+        <span>💾</span> Save Transcript to Editor
+      </button>
+    </div>
+
+    <div id="errorBox" class="error-msg"></div>
+  </div>
+
+  <script>
+    // State Variables
+    let isRecording = false;
+    let isPaused = false;
+    let timerInterval = null;
+    let elapsedSeconds = 0;
+
+    let recognition = null;
+    let audioContext = null;
+    let analyser = null;
+    let micStream = null;
+    let animationId = null;
+
+    let finalizedLines = [];
+    let currentInterim = "";
+
+    const statusBadge = document.getElementById("statusBadge");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const timerDisplay = document.getElementById("recordingTimer");
+    const emptyState = document.getElementById("emptyState");
+    const transcriptLines = document.getElementById("transcriptLines");
+    const interimText = document.getElementById("interimText");
+    const transcriptBox = document.getElementById("transcriptBox");
+    const canvas = document.getElementById("waveformCanvas");
+    const canvasCtx = canvas.getContext("2d");
+    const errorBox = document.getElementById("errorBox");
+
+    const btnStart = document.getElementById("btnStart");
+    const btnPause = document.getElementById("btnPause");
+    const btnResume = document.getElementById("btnResume");
+    const btnStop = document.getElementById("btnStop");
+    const btnSync = document.getElementById("btnSync");
+
+    // Initialize Streamlit Component Bridge
+    function sendValueToStreamlit(data) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: data
+      }, "*");
+    }
+
+    function notifyStreamlitReady() {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:componentReady",
+        apiVersion: 1
+      }, "*");
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height: 480
+      }, "*");
+    }
+
+    window.addEventListener("load", notifyStreamlitReady);
+
+    // Format Seconds to HH:MM:SS
+    function formatTime(totalSeconds) {
+      const hrs = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+      const mins = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+      const secs = String(totalSeconds % 60).padStart(2, "0");
+      return `${hrs}:${mins}:${secs}`;
+    }
+
+    // Timer Logic
+    function startTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (isRecording && !isPaused) {
+          elapsedSeconds++;
+          timerDisplay.textContent = formatTime(elapsedSeconds);
+        }
+      }, 1000);
+    }
+
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    // Audio Visualizer
+    async function initAudioVisualizer() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 64;
+        const source = audioContext.createMediaStreamSource(micStream);
+        source.connect(analyser);
+        drawWaveform();
+      } catch (err) {
+        console.warn("Waveform visualizer mic permission:", err);
+      }
+    }
+
+    function drawWaveform() {
+      if (!canvas) return;
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+
+      const bufferLength = analyser ? analyser.frequencyBinCount : 32;
+      const dataArray = new Uint8Array(bufferLength);
+
+      function render() {
+        animationId = requestAnimationFrame(render);
+        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (analyser && isRecording && !isPaused) {
+          analyser.getByteFrequencyData(dataArray);
+        } else {
+          dataArray.fill(0);
+        }
+
+        const barWidth = (canvas.width / bufferLength) * 1.8;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          let barHeight = (dataArray[i] / 255) * canvas.height * 0.9;
+          if (barHeight < 3) barHeight = 3; // Baseline ambient bar
+
+          const gradient = canvasCtx.createLinearGradient(0, canvas.height, 0, 0);
+          gradient.addColorStop(0, "#3B82F6");
+          gradient.addColorStop(1, "#8B5CF6");
+
+          canvasCtx.fillStyle = gradient;
+          canvasCtx.beginPath();
+          canvasCtx.roundRect(x, (canvas.height - barHeight) / 2, barWidth - 2, barHeight, 2);
+          canvasCtx.fill();
+
+          x += barWidth;
+        }
+      }
+      render();
+    }
+
+    // Web Speech API Initialization
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        showError("Your browser does not support Web Speech API. Please use Google Chrome, Microsoft Edge, or Safari.");
+        return null;
+      }
+
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+
+      rec.onstart = () => {
+        hideError();
+      };
+
+      rec.onresult = (event) => {
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const item = event.results[i];
+          const text = item[0].transcript;
+          if (item.isFinal) {
+            const timestamp = formatTime(elapsedSeconds);
+            commitFinalLine(`[${timestamp}] ${text.trim()}`);
+          } else {
+            interim += text;
+          }
+        }
+        currentInterim = interim;
+        interimText.textContent = interim ? " " + interim : "";
+        transcriptBox.scrollTop = transcriptBox.scrollHeight;
+      };
+
+      rec.onerror = (event) => {
+        console.warn("Speech recognition error:", event.error);
+        if (event.error === "not-allowed") {
+          showError("Microphone permission was denied. Please allow microphone access in your browser settings.");
+          stopMeeting();
+        } else if (event.error === "no-speech") {
+          // Normal when silent, keep running
+        } else {
+          showError("Speech recognition notice: " + event.error);
+        }
+      };
+
+      rec.onend = () => {
+        // Automatically restart if user is still in live meeting and not paused
+        if (isRecording && !isPaused) {
+          try { rec.start(); } catch (e) { /* ignore restart race */ }
+        }
+      };
+
+      return rec;
+    }
+
+    function commitFinalLine(line) {
+      if (emptyState) emptyState.style.display = "none";
+      finalizedLines.push(line);
+
+      const div = document.createElement("div");
+      div.className = "transcript-line";
+      div.textContent = line;
+      transcriptLines.appendChild(div);
+      interimText.textContent = "";
+      transcriptBox.scrollTop = transcriptBox.scrollHeight;
+
+      // Broadcast progressive transcript to Streamlit
+      sendValueToStreamlit({
+        transcript: getFullTranscriptText(),
+        is_stopped: false,
+        duration_seconds: elapsedSeconds
+      });
+    }
+
+    function getFullTranscriptText() {
+      let full = finalizedLines.join("\n");
+      if (currentInterim.trim()) {
+        full += (full ? "\n" : "") + currentInterim.trim();
+      }
+      return full;
+    }
+
+    // Meeting Controls
+    async function startMeeting() {
+      hideError();
+      recognition = initSpeechRecognition();
+      if (!recognition) return;
+
+      try {
+        await initAudioVisualizer();
+        recognition.start();
+
+        isRecording = true;
+        isPaused = false;
+        startTimer();
+
+        // UI Updates
+        statusBadge.className = "badge-live recording";
+        statusDot.className = "dot pulse";
+        statusText.textContent = "LIVE RECORDING";
+
+        btnStart.style.display = "none";
+        btnPause.style.display = "inline-flex";
+        btnResume.style.display = "none";
+        btnStop.style.display = "inline-flex";
+        btnSync.style.display = "inline-flex";
+
+        if (emptyState) emptyState.style.display = "none";
+      } catch (err) {
+        showError("Failed to access microphone: " + err.message);
+      }
+    }
+
+    function pauseMeeting() {
+      if (!isRecording || isPaused) return;
+      isPaused = true;
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+      }
+
+      statusBadge.className = "badge-live paused";
+      statusDot.className = "dot";
+      statusText.textContent = "RECORDING PAUSED";
+
+      btnPause.style.display = "none";
+      btnResume.style.display = "inline-flex";
+    }
+
+    function resumeMeeting() {
+      if (!isRecording || !isPaused) return;
+      isPaused = false;
+      if (recognition) {
+        try { recognition.start(); } catch(e) {}
+      }
+
+      statusBadge.className = "badge-live recording";
+      statusDot.className = "dot pulse";
+      statusText.textContent = "LIVE RECORDING";
+
+      btnPause.style.display = "inline-flex";
+      btnResume.style.display = "none";
+    }
+
+    function stopMeeting() {
+      isRecording = false;
+      isPaused = false;
+      stopTimer();
+
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+      }
+
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+      }
+      if (audioContext) {
+        audioContext.close();
+      }
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+
+      // Commit any lingering interim text
+      if (currentInterim.trim()) {
+        const timestamp = formatTime(elapsedSeconds);
+        commitFinalLine(`[${timestamp}] ${currentInterim.trim()}`);
+        currentInterim = "";
+        interimText.textContent = "";
+      }
+
+      statusBadge.className = "badge-live idle";
+      statusDot.className = "dot";
+      statusText.textContent = "MEETING CONCLUDED";
+
+      btnStart.style.display = "inline-flex";
+      btnStart.innerHTML = "<span>🔄</span> Start New Meeting";
+      btnPause.style.display = "none";
+      btnResume.style.display = "none";
+      btnStop.style.display = "none";
+
+      syncToStreamlit(true);
+    }
+
+    function syncToStreamlit(isStopped = false) {
+      const fullText = getFullTranscriptText();
+      sendValueToStreamlit({
+        transcript: fullText,
+        is_stopped: isStopped,
+        duration_seconds: elapsedSeconds
+      });
+
+      // Visual feedback on button
+      btnSync.textContent = "✅ Saved to Editor!";
+      setTimeout(() => {
+        btnSync.innerHTML = "<span>💾</span> Save Transcript to Editor";
+      }, 1800);
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = "block";
+    }
+
+    function hideError() {
+      errorBox.textContent = "";
+      errorBox.style.display = "none";
+    }
+  </script>
+</body>
+</html>

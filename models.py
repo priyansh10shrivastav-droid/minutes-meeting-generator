@@ -90,6 +90,10 @@ class MeetingMinutes(BaseModel):
         ...,
         description="Executive summary highlighting core discussion, context, and outcomes without hallucinating facts."
     )
+    key_discussion_points: List[str] = Field(
+        default_factory=list,
+        description="Key discussion points and main topics covered during the meeting."
+    )
     key_decisions: List[str] = Field(
         default_factory=list,
         description="Explicit decisions agreed upon during the meeting. Mark 'None' or omit if no explicit decisions."
@@ -97,6 +101,10 @@ class MeetingMinutes(BaseModel):
     action_items: List[ActionItem] = Field(
         default_factory=list,
         description="List of action items with owners, deadlines, and verifiable transcript evidence."
+    )
+    next_meeting_details: Optional[str] = Field(
+        default="Not specified",
+        description="Details, date, or time of the next meeting if discussed, otherwise 'Not specified'."
     )
     unresolved_questions: List[str] = Field(
         default_factory=list,
